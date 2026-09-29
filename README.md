@@ -1,7 +1,7 @@
 # Full-Stack App
 
 Base de una aplicación Full-Stack con frontend y backend independientes en un monorepo sencillo.
-Incluye registro e inicio de sesión locales, un dashboard temporal protegido y un endpoint técnico de salud.
+Incluye registro e inicio de sesión locales, un dashboard protegido con saldo y estadísticas simuladas, y un endpoint técnico de salud.
 
 ## Tech Stack
 
@@ -10,14 +10,14 @@ Incluye registro e inicio de sesión locales, un dashboard temporal protegido y 
 - Material UI y Emotion: componentes visuales y estilos.
 - React Router: navegación y protección de rutas según la sesión local.
 - React Hook Form, Zod y `@hookform/resolvers`: formularios y validación de registro e inicio de sesión.
-- Recharts: dependencia preparada para futuras gráficas.
+- Recharts: donut de apuestas y barras de victorias de caracoles.
 - Node.js, Express y cors: API HTTP y comunicación entre orígenes en desarrollo.
 - Zod: validación del puerto del backend.
 - tsx: ejecución de TypeScript con recarga durante el desarrollo.
 - Vitest, React Testing Library, jest-dom, jsdom y Supertest: pruebas de interfaz y API.
 - ESLint y typescript-eslint: revisión estática del código.
 
-Recharts permanece instalado para una fase posterior; no hay gráficas ni pagos implementados.
+Las estadísticas son datos fijos de demostración. La carga de saldo está visible pero deshabilitada; no hay pagos ni carreras reales implementados.
 
 ## Project Structure
 
@@ -25,9 +25,13 @@ Recharts permanece instalado para una fase posterior; no hay gráficas ni pagos 
 frontend/
   src/
     auth/               # Context, proveedor, guards, esquemas y tipos
-    pages/              # Registro, login y dashboard temporal
+    components/dashboard/ # Header, saldo y gráficas
+    data/               # Estadísticas simuladas deterministas y sus pruebas
+    pages/              # Registro, login y composición del dashboard
     services/           # Autenticación local y acceso centralizado a LocalStorage
     test/               # Configuración de Testing Library y datos ficticios
+    types/dashboard.ts  # Tipos de estadísticas
+    utils/formatCurrency.ts # Formato monetario MXN
     App.tsx             # Rutas, layout y carga de páginas bajo demanda
     App.test.tsx         # Pruebas de formularios, sesión y rutas
     config.ts           # URL base centralizada del API
@@ -96,9 +100,11 @@ Los scripts usan herramientas multiplataforma y no requieren sintaxis exclusiva 
 npm test
 ```
 
-Ejecuta las suites una vez. El frontend comprueba registro, validaciones, hash SHA-256, login, restauración de sesión, logout, rutas y fallos de almacenamiento. La prueba del backend comprueba el estado HTTP y el JSON de `/api/health`. Supertest recibe directamente `app`, sin ejecutar `server.ts` ni requerir un servidor iniciado por separado.
+Ejecuta las suites una vez. El frontend comprueba registro, validaciones, hash SHA-256, login, restauración de sesión, logout, rutas y fallos de almacenamiento. También comprueba los datos del dashboard, saldo, recarga deshabilitada y categorías con cero apuestas. La prueba del backend comprueba el estado HTTP y el JSON de `/api/health`. Supertest recibe directamente `app`, sin ejecutar `server.ts` ni requerir un servidor iniciado por separado.
 
 jsdom no proporciona `SubtleCrypto`: las pruebas usan la implementación real de Web Crypto de Node. La restauración en React se comprueba desmontando y montando la aplicación con el mismo almacenamiento; la recarga real se verifica en navegador.
+
+Para las gráficas, jsdom no calcula dimensiones ni proporciona `ResizeObserver`: las pruebas fijan únicamente el tamaño de `ResponsiveContainer` y mantienen Recharts real. Comprueban títulos y resúmenes textuales sin depender de paths SVG. El comportamiento responsive se verifica por separado en navegador.
 
 Para ejecutar una suite:
 
@@ -186,7 +192,7 @@ Se utiliza SHA-256 mediante [Web Crypto](https://developer.mozilla.org/en-US/doc
 | --- | --- | --- |
 | `/register` | Formulario de registro | Redirige a `/dashboard` |
 | `/login` | Formulario de login | Redirige a `/dashboard` |
-| `/dashboard` | Redirige a `/login` | Saludo, saldo y logout |
+| `/dashboard` | Redirige a `/login` | Usuario, saldo, estadísticas simuladas y logout |
 | `/` o ruta desconocida | Termina en `/login` | Termina en `/dashboard` |
 
 Las redirecciones reemplazan la entrada del historial. Las páginas se cargan bajo demanda con `React.lazy` y muestran un indicador mientras cargan. No se implementan recuperación de contraseña, múltiples usuarios, expiración ni sincronización entre dispositivos. El almacenamiento pertenece al origen y perfil del navegador; borrarlo elimina la cuenta local.
@@ -195,11 +201,40 @@ Las redirecciones reemplazan la entrada del historial. Las páginas se cargan ba
 
 1. Abrir `/register`, enviar datos inválidos y comprobar los mensajes.
 2. Registrar un nombre y correo ficticios con una contraseña de al menos 8 caracteres y confirmación idéntica.
-3. Iniciar sesión; comprobar nombre y saldo `$0` en `/dashboard`.
+3. Iniciar sesión; comprobar nombre y saldo `$0.00` en `/dashboard`.
 4. Recargar: la sesión debe continuar. Abrir `/login` y `/register`: deben redirigir al dashboard.
 5. Cerrar sesión; comprobar la redirección y el rechazo de una contraseña incorrecta.
 6. Iniciar sesión correctamente otra vez, cerrar sesión y abrir `/dashboard` directamente: debe volver a login.
 7. Inspeccionar LocalStorage: logout conserva el usuario y saldo, elimina solo la sesión y no hay campos `password` ni `confirmPassword`.
+
+## Dashboard
+
+El dashboard reutiliza el usuario y saldo del contexto de autenticación. `DashboardPage` compone cuatro componentes:
+
+- `DashboardHeader`: título neutral, nombre y el mismo logout de la autenticación local, con manejo de errores.
+- `BalanceCard`: saldo formateado con `Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })` y dos decimales. No mantiene una copia del saldo en estado local.
+- `BetsChart`: donut de **8 apuestas ganadas y 4 perdidas**, total 12. Incluye leyenda con valores, tooltip y estado vacío si ambos valores son cero.
+- `SnailWinsChart`: barras horizontales para mostrar completos los nombres incluso en móvil, eje de victorias enteras de 0 a 6, tooltip y resumen textual.
+
+Los datos se definen en `frontend/src/data/dashboardData.ts` y no cambian al recargar. Representan exactamente **6 caracoles y 6 carreras simuladas del día**:
+
+| Caracol | Victorias |
+| --- | ---: |
+| Turbo | 2 |
+| Flash | 1 |
+| Rocket | 1 |
+| Speedy | 1 |
+| Shelly | 0 |
+| Bolt | 1 |
+| **Total** | **6** |
+
+La distribución de apuestas es una estadística de demostración independiente; no se calculan apuestas a partir de estas carreras. No hay peticiones al backend para obtener estas constantes.
+
+**Cargar saldo** está deshabilitado con la indicación visible `Disponible próximamente`, asociada mediante `aria-describedby`. No abre formularios, no modifica el saldo y no realiza peticiones. La tarjeta refleja el saldo recibido del contexto, incluido cualquier valor válido ya persistido.
+
+El layout usa los breakpoints de Material UI: dos columnas desde `md` y una columna en tablet/móvil. Header y tarjeta de saldo se apilan en pantallas pequeñas. Las gráficas usan `ResponsiveContainer`, ancho flexible y altura estable. Los títulos de sección, leyendas con cantidades y lista de victorias permiten entender los datos sin depender solo del color. La navegación y tooltips de Recharts conservan su capa de accesibilidad.
+
+La revisión visual de esta fase se realizó en Edge a 1440, 768 y 375 px, junto con registro, login, recarga de página, logout y nuevo login. No se incorporaron herramientas de navegador a las dependencias del proyecto.
 
 ## Compatibility Notes
 

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, afterEach, expect, test, vi } from 'vitest';
 import { MemoryRouter, useLocation } from 'react-router';
 import App from './App';
@@ -58,8 +58,9 @@ test('validates registration and completes registration, login, reload, logout a
   expect(await screen.findByText('Correo o contraseña incorrectos.')).toBeVisible();
   expect(screen.getByTestId('path')).toHaveTextContent('/login');
   await signIn();
-  expect(await screen.findByRole('heading', { name: 'Hola, Persona Demo' })).toBeVisible();
-  expect(screen.getByText('Saldo actual: $0')).toBeVisible();
+  // El primer acceso carga también Recharts mediante el import dinámico de la página.
+  expect(await screen.findByRole('heading', { name: 'Hola, Persona Demo' }, { timeout: 5000 })).toBeVisible();
+  expect(screen.getByText('$0.00')).toBeVisible();
   const storedUser = authStorage.readUser();
   app.unmount();
   openApp('/dashboard');
@@ -119,4 +120,33 @@ test('reacts to logout in another tab', async () => {
   authStorage.removeSession();
   fireEvent(window, new StorageEvent('storage', { key: AUTH_KEYS.session }));
   await waitFor(() => expect(screen.getByTestId('path')).toHaveTextContent('/login'));
+});
+
+test('shows dashboard statistics and the persisted balance without enabling top ups', async () => {
+  await authService.register(registration);
+  await authService.login(credentials);
+  openApp('/dashboard');
+  expect(await screen.findByRole('heading', { name: 'Hola, Persona Demo' })).toBeVisible();
+  expect(screen.getByText('$0.00')).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Saldo disponible' })).toBeVisible();
+  expect(screen.getByText('Estadísticas simuladas')).toBeVisible();
+  const bets = screen.getByRole('region', { name: 'Resultados de apuestas' });
+  expect(within(bets).getByText('12 apuestas simuladas en total')).toBeVisible();
+  expect(within(bets).getAllByRole('listitem').map((entry) => entry.textContent)).toEqual(['Ganadas: 8', 'Perdidas: 4']);
+  expect(screen.getByRole('heading', { name: 'Victorias de caracoles' })).toBeVisible();
+  const wins = within(screen.getByRole('list', { name: 'Resumen de victorias' })).getAllByRole('listitem');
+  expect(wins.map((entry) => entry.textContent)).toEqual(['Turbo: 2', 'Flash: 1', 'Rocket: 1', 'Speedy: 1', 'Shelly: 0', 'Bolt: 1']);
+  const topUp = screen.getByRole('button', { name: 'Cargar saldo' });
+  expect(topUp).toBeDisabled();
+  expect(topUp).toHaveAccessibleDescription('Disponible próximamente');
+  const originalUser = authStorage.readUser()!;
+  const write = vi.spyOn(Storage.prototype, 'setItem');
+  fireEvent.click(topUp);
+  expect(write).not.toHaveBeenCalled();
+  expect(authStorage.readUser()).toEqual(originalUser);
+
+  // Un cambio en el usuario persistido se refleja a través del contexto existente.
+  authStorage.saveUser({ ...originalUser, balance: 1234.5 });
+  fireEvent(window, new StorageEvent('storage', { key: AUTH_KEYS.user }));
+  expect(await screen.findByText('$1,234.50')).toBeVisible();
 });
