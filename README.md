@@ -1,7 +1,7 @@
 # Full-Stack App
 
 Base de una aplicación Full-Stack con frontend y backend independientes en un monorepo sencillo.
-Incluye registro e inicio de sesión locales, un dashboard protegido con saldo y estadísticas simuladas, y un endpoint técnico de salud.
+Incluye registro e inicio de sesión locales, un dashboard protegido con saldo y estadísticas simuladas, un endpoint técnico de salud y una API de pagos ficticios.
 
 ## Tech Stack
 
@@ -40,6 +40,11 @@ frontend/
   vite.config.ts
 backend/
   src/
+    routes/             # Endpoint de pagos y pruebas de sus escenarios
+    schemas/            # Validación runtime de solicitudes
+    services/           # Mock SnailPay sin persistencia
+    types/              # Contrato de respuesta de pagos
+    middleware/         # Errores API sin detalles internos
     app.ts              # Express y endpoint de salud
     app.test.ts          # Prueba HTTP con Supertest
     server.ts           # Validación del puerto y listen
@@ -100,7 +105,7 @@ Los scripts usan herramientas multiplataforma y no requieren sintaxis exclusiva 
 npm test
 ```
 
-Ejecuta las suites una vez. El frontend comprueba registro, validaciones, hash SHA-256, login, restauración de sesión, logout, rutas y fallos de almacenamiento. También comprueba los datos del dashboard, saldo, recarga deshabilitada y categorías con cero apuestas. La prueba del backend comprueba el estado HTTP y el JSON de `/api/health`. Supertest recibe directamente `app`, sin ejecutar `server.ts` ni requerir un servidor iniciado por separado.
+Ejecuta las suites una vez. El frontend comprueba registro, validaciones, hash SHA-256, login, restauración de sesión, logout, rutas y fallos de almacenamiento. También comprueba los datos del dashboard, saldo, recarga deshabilitada y categorías con cero apuestas. El backend comprueba `/api/health` y los cinco escenarios del mock de pagos. Supertest recibe directamente `app`, sin ejecutar `server.ts` ni requerir un servidor iniciado por separado. La prueba de latencia usa el servicio con fake timers; el retraso HTTP real se verifica funcionalmente.
 
 jsdom no proporciona `SubtleCrypto`: las pruebas usan la implementación real de Web Crypto de Node. La restauración en React se comprueba desmontando y montando la aplicación con el mismo almacenamiento; la recarga real se verifica en navegador.
 
@@ -235,6 +240,89 @@ La distribución de apuestas es una estadística de demostración independiente;
 El layout usa los breakpoints de Material UI: dos columnas desde `md` y una columna en tablet/móvil. Header y tarjeta de saldo se apilan en pantallas pequeñas. Las gráficas usan `ResponsiveContainer`, ancho flexible y altura estable. Los títulos de sección, leyendas con cantidades y lista de victorias permiten entender los datos sin depender solo del color. La navegación y tooltips de Recharts conservan su capa de accesibilidad.
 
 La revisión visual de esta fase se realizó en Edge a 1440, 768 y 375 px, junto con registro, login, recarga de página, logout y nuevo login. No se incorporaron herramientas de navegador a las dependencias del proyecto.
+
+## SnailPay: API simulada de pagos
+
+**Todos los datos son ficticios. Nunca enviar datos financieros reales.** SnailPay es un mock local sin conexiones a proveedores externos, autenticación backend, almacenamiento de transacciones ni modificación de saldos. El frontend aún no consume esta API y el botón de recarga sigue deshabilitado.
+
+### Solicitud
+
+`POST http://localhost:3000/api/payments`, con `Content-Type: application/json`:
+
+```json
+{
+  "cardNumber": "1234123412341234",
+  "expirationDate": "12/26",
+  "cvv": "543",
+  "fullName": "Persona Demo",
+  "amount": 125.5,
+  "payerId": "demo-user",
+  "payerEmail": "demo@example.test"
+}
+```
+
+Todos los campos son obligatorios. `cardNumber` y `cvv` son strings de exactamente 16 y 3 dígitos, respectivamente. `expirationDate` debe cumplir `MM/YY` con mes entre `01` y `12`; no se compara con la fecha actual para mantener reproducible el fixture `12/26`. Nombre e ID no pueden quedar vacíos después de `trim`. El correo se valida y normaliza con `trim` y minúsculas. `amount` debe ser un número finito mayor que cero, sin coerción de strings ni redondeo o límite de decimales. No se aplica validación Luhn a estas tarjetas ficticias.
+
+Para reproducir desde PowerShell, iniciar el backend y ejecutar:
+
+```powershell
+$payment = @{
+  cardNumber = '1234123412341234'
+  expirationDate = '12/26'
+  cvv = '543'
+  fullName = 'Persona Demo'
+  amount = 125.5
+  payerId = 'demo-user'
+  payerEmail = 'demo@example.test'
+}
+Invoke-RestMethod -Method Post -Uri 'http://localhost:3000/api/payments' -ContentType 'application/json' -Body ($payment | ConvertTo-Json)
+```
+
+Cambiar `cardNumber` según la tabla. PowerShell tratará las respuestas HTTP 400/402/500 como errores del comando; el cuerpo JSON contiene el resultado descrito abajo y también puede inspeccionarse con un cliente HTTP.
+
+### Escenarios deterministas
+
+| Escenario | Tarjeta ficticia | Vencimiento | CVV | HTTP | `status / status_detail` |
+| --- | --- | --- | --- | --- | --- |
+| Aprobado | `1234123412341234` | `12/26` exacto | `543` exacto | 200 | `approved / accredited` |
+| Rechazado | `4000000000000002` | Formato válido | 3 dígitos | 402 | `rejected / card_declined` |
+| Error de sistema | `5000000000000000` | Formato válido | 3 dígitos | 500 | `error / internal_error` |
+| Respuesta lenta | `5555555555554444` | Formato válido | 3 dígitos | 500 tras unos 3 s | `error / gateway_timeout` |
+| Otra tarjeta o credenciales de éxito distintas | Formato válido | Formato válido | 3 dígitos | 402 | `rejected / card_declined` |
+
+La validación se ejecuta antes de seleccionar cualquier escenario. Para provocar HTTP 400, enviar por ejemplo `amount: 0`. No existe una operación SnailPay en ese caso:
+
+```json
+{
+  "error": {
+    "code": "invalid_payment_data",
+    "message": "Revisa los campos de la solicitud de pago.",
+    "fields": ["amount"]
+  }
+}
+```
+
+Un JSON mal formado produce HTTP 400 con `error.code: invalid_request`; los errores del parser conservan su estado HTTP 4xx sin exponer el cuerpo recibido. Una excepción inesperada devuelve HTTP 500 con un error API genérico `internal_error`, sin stack traces ni rutas locales. El error de sistema simulado de la tabla es un resultado controlado del servicio y sí utiliza el contrato de pago.
+
+### Contrato de respuesta del mock
+
+Los resultados aprobados, rechazados y errores simulados contienen siempre:
+
+- `id`: UUID nuevo por operación; `reference`: `PAY-<UUID>`.
+- `status`: `approved`, `rejected` o `error`; `status_detail`: detalle de la tabla.
+- `transaction_amount`: importe validado, sin modificarlo.
+- `date_created`: fecha ISO 8601 al generar la respuesta.
+- `authorization_code`: `AUTH-<8 caracteres del UUID>` en aprobados, `null` en los demás casos.
+- `payer_id`, `payer_email`: valores normalizados de la solicitud.
+- `card_number`, `cvv`: valores ficticios recibidos, sin enmascarar, por requisito explícito de este mock.
+
+Los escenarios son deterministas; IDs, referencias, códigos de autorización y fechas cambian por operación. El mock no registra cuerpos de solicitudes, tarjetas ni CVV, y no persiste respuestas. **Devolver o almacenar CVV no sería aceptable en una integración financiera real.**
+
+### Latencia y alcance
+
+`TEST_CARDS`, las credenciales de éxito y `SLOW_RESPONSE_MS = 3000` están centralizados en `backend/src/services/snailPayService.ts`. El escenario lento siempre termina en error y nunca aprueba. Un cliente puede usar un timeout menor (por ejemplo 1 segundo) y abortar la espera; eso no constituye una aprobación. El servidor finaliza su espera de unos 3 segundos aunque el cliente cierre la conexión. El tiempo real puede aumentar con la carga del proceso.
+
+La ruta contiene el controlador de esta única operación: valida con Zod, llama al servicio y traduce el estado a HTTP. Los rechazos son resultados esperados, no excepciones. No se han añadido capas adicionales ni dependencias. Una aprobación únicamente describe una operación ficticia; no acredita saldo ni genera efectos secundarios.
 
 ## Compatibility Notes
 
