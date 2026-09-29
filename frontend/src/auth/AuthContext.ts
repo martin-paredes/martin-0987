@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { LoginInput, RegisterInput, User } from './schemas';
+import type { PaymentResponse } from '../../../backend/src/types/payment';
 
 export interface AuthContextValue {
   user: User | null;
@@ -7,6 +8,7 @@ export interface AuthContextValue {
   register: (input: RegisterInput) => Promise<void>;
   login: (input: LoginInput) => Promise<void>;
   logout: () => void;
+  applyPayment: (payment: PaymentResponse) => void;
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null);

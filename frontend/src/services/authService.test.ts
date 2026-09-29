@@ -9,7 +9,7 @@ afterEach(() => vi.restoreAllMocks());
 test('registers a normalized user with zero balance and only a password hash', async () => {
   await authService.register(registration);
   const user = authStorage.readUser();
-  expect(user).toMatchObject({ fullName: 'Persona Demo', email: 'demo@example.test', balance: 0 });
+  expect(user).toMatchObject({ fullName: 'Persona Demo', email: credentials.email, balance: 0 });
   expect(user?.id).toMatch(/^[a-f0-9-]{36}$/);
   expect(user?.passwordHash).toMatch(/^[a-f0-9]{64}$/);
   const raw = localStorage.getItem(AUTH_KEYS.user)!;
@@ -45,7 +45,7 @@ test('normalizes login, restores session, and preserves user and balance on logo
   await authService.register(registration);
   const stored = authStorage.readUser()!;
   authStorage.saveUser({ ...stored, balance: 25 });
-  const user = await authService.login({ ...credentials, email: ' DEMO@EXAMPLE.TEST ' });
+  const user = await authService.login({ ...credentials, email: ` ${credentials.email.toUpperCase()} ` });
   expect(user).not.toHaveProperty('passwordHash');
   expect(JSON.parse(localStorage.getItem(AUTH_KEYS.session)!)).toEqual({ userId: stored.id });
   expect(authService.restore()).toEqual(user);

@@ -122,7 +122,7 @@ test('reacts to logout in another tab', async () => {
   await waitFor(() => expect(screen.getByTestId('path')).toHaveTextContent('/login'));
 });
 
-test('shows dashboard statistics and the persisted balance without enabling top ups', async () => {
+test('shows dashboard statistics and opens top ups without changing the persisted balance', async () => {
   await authService.register(registration);
   await authService.login(credentials);
   openApp('/dashboard');
@@ -137,13 +137,14 @@ test('shows dashboard statistics and the persisted balance without enabling top 
   const wins = within(screen.getByRole('list', { name: 'Resumen de victorias' })).getAllByRole('listitem');
   expect(wins.map((entry) => entry.textContent)).toEqual(['Turbo: 2', 'Flash: 1', 'Rocket: 1', 'Speedy: 1', 'Shelly: 0', 'Bolt: 1']);
   const topUp = screen.getByRole('button', { name: 'Cargar saldo' });
-  expect(topUp).toBeDisabled();
-  expect(topUp).toHaveAccessibleDescription('Disponible próximamente');
+  expect(topUp).toBeEnabled();
   const originalUser = authStorage.readUser()!;
   const write = vi.spyOn(Storage.prototype, 'setItem');
   fireEvent.click(topUp);
+  expect(await screen.findByRole('dialog', { name: 'Cargar saldo' })).toBeVisible();
   expect(write).not.toHaveBeenCalled();
   expect(authStorage.readUser()).toEqual(originalUser);
+  fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }));
 
   // Un cambio en el usuario persistido se refleja a través del contexto existente.
   authStorage.saveUser({ ...originalUser, balance: 1234.5 });

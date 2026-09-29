@@ -32,6 +32,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       isAuthenticated: user !== null,
       register: authService.register,
+      applyPayment(payment) {
+        setUser(authService.applyPayment(payment));
+      },
       async login(input) {
         const authenticatedUser = await authService.login(input);
         setUser(authenticatedUser);

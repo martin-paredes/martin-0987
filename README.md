@@ -17,7 +17,7 @@ Incluye registro e inicio de sesión locales, un dashboard protegido con saldo y
 - Vitest, React Testing Library, jest-dom, jsdom y Supertest: pruebas de interfaz y API.
 - ESLint y typescript-eslint: revisión estática del código.
 
-Las estadísticas son datos fijos de demostración. La carga de saldo está visible pero deshabilitada; no hay pagos ni carreras reales implementados.
+Las estadísticas son datos fijos de demostración. La recarga conecta el frontend con el mock de pagos y actualiza el saldo local solo cuando recibe una aprobación. No se procesan pagos ni carreras reales.
 
 ## Project Structure
 
@@ -26,9 +26,11 @@ frontend/
   src/
     auth/               # Context, proveedor, guards, esquemas y tipos
     components/dashboard/ # Header, saldo y gráficas
+    components/payments/  # Diálogo de recarga y pruebas del flujo
+    schemas/paymentSchema.ts # Validación del formulario y de respuestas del mock
     data/               # Estadísticas simuladas deterministas y sus pruebas
     pages/              # Registro, login y composición del dashboard
-    services/           # Autenticación local y acceso centralizado a LocalStorage
+    services/           # Autenticación, cliente de pagos y acceso a LocalStorage
     test/               # Configuración de Testing Library y datos ficticios
     types/dashboard.ts  # Tipos de estadísticas
     utils/formatCurrency.ts # Formato monetario MXN
@@ -105,7 +107,7 @@ Los scripts usan herramientas multiplataforma y no requieren sintaxis exclusiva 
 npm test
 ```
 
-Ejecuta las suites una vez. El frontend comprueba registro, validaciones, hash SHA-256, login, restauración de sesión, logout, rutas y fallos de almacenamiento. También comprueba los datos del dashboard, saldo, recarga deshabilitada y categorías con cero apuestas. El backend comprueba `/api/health` y los cinco escenarios del mock de pagos. Supertest recibe directamente `app`, sin ejecutar `server.ts` ni requerir un servidor iniciado por separado. La prueba de latencia usa el servicio con fake timers; el retraso HTTP real se verifica funcionalmente.
+Ejecuta las suites una vez. El frontend comprueba registro, validaciones, hash SHA-256, login, restauración de sesión, logout, rutas y fallos de almacenamiento. También comprueba el dashboard y la recarga: importe aprobado, suma de saldos, doble envío, persistencia, rechazo, error de sistema, red, respuestas inválidas y timeout con fake timers. El backend comprueba `/api/health` y los cinco escenarios del mock de pagos. Supertest recibe directamente `app`, sin ejecutar `server.ts` ni requerir un servidor iniciado por separado. La prueba de latencia usa el servicio con fake timers; el retraso HTTP real se verifica funcionalmente.
 
 jsdom no proporciona `SubtleCrypto`: las pruebas usan la implementación real de Web Crypto de Node. La restauración en React se comprueba desmontando y montando la aplicación con el mismo almacenamiento; la recarga real se verifica en navegador.
 
@@ -157,7 +159,7 @@ Para personalizarlos, copiar manualmente cada `.env.example` a `.env` dentro del
 
 | Variable | Archivo local | Valor por defecto | Uso |
 | --- | --- | --- | --- |
-| `VITE_API_URL` | `frontend/.env` | `http://localhost:3000/api` | URL base exportada por `frontend/src/config.ts` para futuras llamadas con `fetch`. |
+| `VITE_API_URL` | `frontend/.env` | `http://localhost:3000/api` | Base del API, incluido `/api`. El servicio añade `/payments` al enviar la recarga. |
 | `PORT` | `backend/.env` | `3000` | Puerto entero entre 1 y 65535. Un valor inválido impide iniciar el servidor. |
 
 Vite carga las variables del frontend; los scripts de Node/tsx cargan el `.env` opcional del backend. Reiniciar el proceso tras cambiar variables. Las variables `VITE_*` son públicas y se incorporan al build: no deben contener secretos.
@@ -235,7 +237,7 @@ Los datos se definen en `frontend/src/data/dashboardData.ts` y no cambian al rec
 
 La distribución de apuestas es una estadística de demostración independiente; no se calculan apuestas a partir de estas carreras. No hay peticiones al backend para obtener estas constantes.
 
-**Cargar saldo** está deshabilitado con la indicación visible `Disponible próximamente`, asociada mediante `aria-describedby`. No abre formularios, no modifica el saldo y no realiza peticiones. La tarjeta refleja el saldo recibido del contexto, incluido cualquier valor válido ya persistido.
+**Cargar saldo** abre un diálogo con los datos ficticios de la operación. La tarjeta muestra siempre el saldo de AuthContext; no mantiene un saldo propio ni requiere recargar la página para mostrar los cambios.
 
 El layout usa los breakpoints de Material UI: dos columnas desde `md` y una columna en tablet/móvil. Header y tarjeta de saldo se apilan en pantallas pequeñas. Las gráficas usan `ResponsiveContainer`, ancho flexible y altura estable. Los títulos de sección, leyendas con cantidades y lista de victorias permiten entender los datos sin depender solo del color. La navegación y tooltips de Recharts conservan su capa de accesibilidad.
 
@@ -243,7 +245,7 @@ La revisión visual de esta fase se realizó en Edge a 1440, 768 y 375 px, junto
 
 ## SnailPay: API simulada de pagos
 
-**Todos los datos son ficticios. Nunca enviar datos financieros reales.** SnailPay es un mock local sin conexiones a proveedores externos, autenticación backend, almacenamiento de transacciones ni modificación de saldos. El frontend aún no consume esta API y el botón de recarga sigue deshabilitado.
+**Todos los datos son ficticios. Nunca enviar datos financieros reales.** SnailPay es un mock local sin conexiones a proveedores externos ni autenticación backend. El backend no almacena transacciones ni modifica saldos. El frontend consume esta API y acredita localmente las respuestas aprobadas.
 
 ### Solicitud
 
@@ -322,7 +324,57 @@ Los escenarios son deterministas; IDs, referencias, códigos de autorización y 
 
 `TEST_CARDS`, las credenciales de éxito y `SLOW_RESPONSE_MS = 3000` están centralizados en `backend/src/services/snailPayService.ts`. El escenario lento siempre termina en error y nunca aprueba. Un cliente puede usar un timeout menor (por ejemplo 1 segundo) y abortar la espera; eso no constituye una aprobación. El servidor finaliza su espera de unos 3 segundos aunque el cliente cierre la conexión. El tiempo real puede aumentar con la carga del proceso.
 
-La ruta contiene el controlador de esta única operación: valida con Zod, llama al servicio y traduce el estado a HTTP. Los rechazos son resultados esperados, no excepciones. No se han añadido capas adicionales ni dependencias. Una aprobación únicamente describe una operación ficticia; no acredita saldo ni genera efectos secundarios.
+La ruta contiene el controlador de esta única operación: valida con Zod, llama al servicio y traduce el estado a HTTP. Los rechazos son resultados esperados, no excepciones. Una aprobación describe una operación ficticia: el backend no acredita saldo; esa actualización corresponde al frontend.
+
+## Recarga desde el dashboard
+
+Iniciar frontend y backend con los comandos de Development. Registrar una cuenta local o iniciar sesión con la ya guardada y pulsar **Cargar saldo**.
+
+El diálogo usa Material UI, React Hook Form y Zod. Pide tarjeta ficticia de 16 dígitos, vencimiento `MM/YY` con mes válido, CVV de 3 dígitos, nombre no vacío y monto numérico finito mayor que cero. El nombre comienza con el del usuario y puede editarse; `payerId` y `payerEmail` se toman del contexto y no son campos del formulario. Las reglas mantienen el formato del backend, sin comprobar vencimiento contra la fecha actual. Los importes se presentan en MXN.
+
+`paymentService.ts` usa `fetch` con la base de `config.ts`, valida la respuesta con Zod y comprueba que el estado HTTP coincida con el resultado del mock y que los datos correspondan al pagador y tarjeta enviados. Los tipos de solicitud y respuesta se importan con `import type` desde los archivos existentes del backend; no se ejecuta código del servidor en el navegador ni se crea otro workspace.
+
+### Resultados y cancelación
+
+| Resultado | Comportamiento |
+| --- | --- |
+| 200, `approved / accredited` | Suma `transaction_amount` de la respuesta al saldo persistido, actualiza AuthContext, cierra el diálogo y muestra confirmación en Snackbar. |
+| 402, `rejected / card_declined` | Mantiene el saldo y muestra un mensaje de rechazo dentro del diálogo. |
+| 500 con respuesta del mock | Mantiene el saldo y muestra el error correspondiente. |
+| Validación local o HTTP 400 | No acredita ni guarda una transacción. Muestra validaciones o un mensaje para revisar los datos. |
+| Respuesta inesperada o de otro pagador | No acredita ni guarda una transacción. |
+| Timeout o error de red | No acredita ni reemplaza la última transacción. Muestra un mensaje específico y permite reintentar. |
+
+`PAYMENT_TIMEOUT_MS = 2000` es menor que los 3000 ms del escenario lento. Al vencer, `AbortController` aborta la petición y el formulario vuelve a habilitarse. El servicio limpia el temporizador al terminar y también acepta una señal de cancelación. Si el diálogo se desmonta, por ejemplo por logout desde otra pestaña, se aborta la petición pendiente.
+
+Antes de enviar se puede cancelar, pulsar Escape o cerrar desde el fondo del diálogo. Durante el envío se deshabilitan los campos, el submit y Cancelar, y se bloquean los intentos de cierre. Un guard adicional evita solicitudes simultáneas antes de que React actualice el botón. Al cancelar o aprobar se limpian los campos; un error conserva los datos para corregirlos. Los errores quedan visibles en el diálogo para mantenerlos accesibles dentro del foco del modal.
+
+### Saldo y última transacción ficticia
+
+`AuthContext.applyPayment` usa `authService.applyPayment`: vuelve a leer usuario y sesión, verifica el pagador y guarda la última respuesta procesada. Solo si está aprobada suma el importe confirmado al saldo actual, normaliza el resultado a dos decimales, persiste el usuario y después actualiza el contexto. Dos recargas de `100` y `50.50` sobre saldo cero dejan `150.50`, no `50.50`. El saldo permanece después de refresh y logout/login.
+
+La key separada **`fullstack.payment.lastTransaction`** guarda únicamente la última operación procesada:
+
+```text
+{ id, status, statusDetail, transactionAmount, dateCreated, payerId, cardNumber, cvv }
+```
+
+Se guardan los datos de respuestas válidas aprobadas, rechazadas y de error del mock. No se guarda el formulario antes de enviarlo ni se inventa una transacción cuando no hay respuesta válida. Cada registro reemplaza al anterior; no hay historial. Logout elimina solo la sesión y conserva este registro junto con el saldo existente. Tarjeta y CVV permanecen separados del objeto User.
+
+**La tarjeta y el CVV son ficticios y se almacenan exclusivamente para cumplir este escenario. Una aplicación real nunca debe guardar CVV en LocalStorage ni manejar números completos de tarjeta de esta manera. LocalStorage no es un almacenamiento seguro.**
+
+Si falla guardar la última operación, no se acredita. Si se guarda una aprobación pero falla la escritura del usuario, se conserva esa respuesta y el saldo anterior, y se informa del fallo sin mostrar éxito. Las dos keys no forman una transacción atómica; esta simulación no incluye recuperación automática, idempotencia distribuida ni bloqueo entre pestañas. No se guarda una segunda copia del saldo.
+
+### Verificación del flujo de recarga
+
+1. Con saldo cero, usar la tarjeta aprobada de la tabla y recargar `100`; el dashboard debe mostrar `$100.00` sin refresh.
+2. Repetir con `50.50`; debe mostrar `$150.50`.
+3. Recargar la página y hacer logout/login; el saldo debe permanecer.
+4. Probar rechazo y error del sistema; comprobar el mensaje, el saldo intacto y la última respuesta guardada.
+5. Probar la tarjeta lenta; comprobar timeout a los 2 segundos y que no cambien saldo ni última operación.
+6. Con el backend inaccesible, comprobar el mensaje de conexión y la posibilidad de reintentar.
+
+El flujo se verificó con React y Express reales en Edge, con vistas de 1440, 768 y 375 px. Los datos de prueba automatizados se mantienen en `authFixtures.ts`; no crean una cuenta en el navegador del usuario.
 
 ## Compatibility Notes
 

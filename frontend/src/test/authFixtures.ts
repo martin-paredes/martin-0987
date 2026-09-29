@@ -1,8 +1,8 @@
 export const registration = {
   fullName: '  Persona Demo  ',
   email: '  test@example.test  ',
-  password: 'test123',
-  confirmPassword: 'test123',
+  password: 'test1234',
+  confirmPassword: 'test1234',
 };
 
-export const credentials = { email: 'demo@example.test', password: registration.password };
+export const credentials = { email: 'test@example.test', password: registration.password };

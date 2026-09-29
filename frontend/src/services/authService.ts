@@ -1,6 +1,9 @@
 import { loginSchema, registerSchema } from '../auth/schemas';
 import type { LoginInput, RegisterInput, StoredUser, User } from '../auth/schemas';
 import { authStorage } from './authStorage';
+import type { PaymentResponse } from '../../../backend/src/types/payment';
+import { paymentResponseSchema } from '../schemas/paymentSchema';
+import { saveLastTransaction } from './paymentStorage';
 
 // Solo para la simulación local. SHA-256 sin salt ni factor de trabajo no es
 // almacenamiento de contraseñas apto para producción (ver README).
@@ -53,6 +56,27 @@ export const authService = {
     }
     authStorage.saveSession({ userId: user.id });
     return publicUser(user);
+  },
+
+  applyPayment(response: PaymentResponse): User {
+    const payment = paymentResponseSchema.parse(response);
+    const user = authStorage.readUser();
+    const session = authStorage.readSession();
+    if (!user || session?.userId !== user.id || payment.payer_id !== user.id || payment.payer_email !== user.email) {
+      throw new Error('La sesión cambió. Inicia sesión nuevamente antes de recargar.');
+    }
+    saveLastTransaction(payment);
+    if (payment.status !== 'approved') return publicUser(user);
+
+    const balance = Number((user.balance + payment.transaction_amount).toFixed(2));
+    if (!Number.isFinite(balance)) throw new Error('El importe recibido no permite actualizar el saldo.');
+    const updatedUser = { ...user, balance };
+    try {
+      authStorage.saveUser(updatedUser);
+    } catch {
+      throw new Error('La recarga fue aprobada, pero no se pudo guardar el nuevo saldo. El saldo local no cambió.');
+    }
+    return publicUser(updatedUser);
   },
 
   logout() {
