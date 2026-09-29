@@ -141,17 +141,74 @@ test('does not credit a response for a different payer or an invalid contract', 
   expect(localStorage.getItem(LAST_TRANSACTION_KEY)).toBeNull();
 });
 
-test('does not show success if persisting an approved balance fails', async () => {
+test.each([
+  { key: AUTH_KEYS.user, message: 'La recarga fue aprobada, pero no se pudo guardar el nuevo saldo. El saldo local no cambió.' },
+  { key: LAST_TRANSACTION_KEY, message: 'Se recibió una respuesta, pero no se pudo guardar en este navegador. El saldo no cambió.' },
+])('does not show success if persisting $key fails', async ({ key: failedKey, message }) => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(response()), { status: 200 })));
   const originalSet = Storage.prototype.setItem;
   vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
-    if (key === AUTH_KEYS.user) throw new Error('blocked');
+    if (key === failedKey) throw new Error('blocked');
     originalSet.call(this, key, value);
   });
   openApp();
   const dialog = await openForm();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Realizar recarga' }));
-  expect(await screen.findByText('La recarga fue aprobada, pero no se pudo guardar el nuevo saldo. El saldo local no cambió.')).toBeVisible();
+  expect(await screen.findByText(message)).toBeVisible();
   expect(authStorage.readUser()?.balance).toBe(0);
   expect(screen.queryByText('Recarga aprobada. Tu saldo fue actualizado.')).not.toBeInTheDocument();
+});
+
+test.each([
+  { scenario: 'HTTP 400', message: 'Revisa los datos de la recarga e intenta nuevamente.' },
+  { scenario: 'timeout', message: 'La operación tardó demasiado. Intenta nuevamente.' },
+])('preserves a nonzero balance on $scenario and allows a successful retry', async ({ scenario, message }) => {
+  const originalUser = { ...authStorage.readUser()!, balance: 25 };
+  authStorage.saveUser(originalUser);
+  localStorage.setItem(LAST_TRANSACTION_KEY, 'previous-receipt');
+  let signal: AbortSignal | null | undefined;
+  const fetchMock = vi.fn().mockImplementationOnce((_url: string, options: RequestInit) => {
+    signal = options.signal;
+    if (scenario === 'HTTP 400') return Promise.resolve(new Response('{"error":{"code":"invalid_payment_data"}}', { status: 400 }));
+    return new Promise<Response>((_resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+    });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  openApp();
+  const dialog = await openForm();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Realizar recarga' }));
+  expect(await screen.findByText(message, {}, { timeout: 4000 })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Realizar recarga' })).toBeEnabled();
+  expect(authStorage.readUser()).toEqual(originalUser);
+  expect(localStorage.getItem(LAST_TRANSACTION_KEY)).toBe('previous-receipt');
+  expect(screen.queryByText('Recarga aprobada. Tu saldo fue actualizado.')).not.toBeInTheDocument();
+  if (scenario === 'timeout') expect(signal?.aborted).toBe(true);
+
+  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(response()), { status: 200 }));
+  fireEvent.click(screen.getByRole('button', { name: 'Realizar recarga' }));
+  expect(await screen.findByText('$125.00')).toBeVisible();
+  expect(authStorage.readUser()?.balance).toBe(125);
+}, 10000);
+
+test('aborts a pending payment on logout in another tab and ignores a late approval', async () => {
+  const payment = response();
+  let resolveRequest: (value: Response) => void = () => {};
+  let signal: AbortSignal | null | undefined;
+  vi.stubGlobal('fetch', vi.fn((_url: string, options: RequestInit) => {
+    signal = options.signal;
+    return new Promise<Response>((resolve) => { resolveRequest = resolve; });
+  }));
+  openApp();
+  const dialog = await openForm();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Realizar recarga' }));
+  await screen.findByRole('button', { name: 'Procesando…' });
+  authStorage.removeSession();
+  fireEvent(window, new StorageEvent('storage', { key: AUTH_KEYS.session }));
+  expect(await screen.findByRole('heading', { name: 'Iniciar sesión' })).toBeVisible();
+  expect(signal?.aborted).toBe(true);
+  resolveRequest(new Response(JSON.stringify(payment), { status: 200 }));
+  await waitFor(() => expect(authStorage.readSession()).toBeNull());
+  expect(authStorage.readUser()?.balance).toBe(0);
+  expect(localStorage.getItem(LAST_TRANSACTION_KEY)).toBeNull();
 });

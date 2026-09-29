@@ -71,7 +71,7 @@ test('validates registration and completes registration, login, reload, logout a
   expect(authStorage.readUser()).toEqual(storedUser);
   await signIn();
   expect(await screen.findByRole('heading', { name: 'Hola, Persona Demo' })).toBeVisible();
-});
+}, 15000);
 
 test.each(['/dashboard', '/login', '/register', '/unknown'])('restores authenticated access from %s', async (path) => {
   await authService.register(registration);

@@ -6,6 +6,24 @@ import { authStorage } from './authStorage';
 import { registration, credentials } from '../test/authFixtures';
 import { LAST_TRANSACTION_KEY } from './paymentStorage';
 
+test.each([
+  { failure: 'interrupted body', kind: 'network' },
+  { failure: 'non-JSON server error', kind: 'system' },
+])('classifies $failure without exposing technical details', async ({ failure, kind }) => {
+  const response = failure === 'interrupted body'
+    ? new Response(new ReadableStream({ start(controller) { controller.error(new TypeError('Connection terminated')); } }))
+    : new Response('<html>Internal Server Error</html>', { status: 500 });
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+  try {
+    await expect(processPayment({
+      cardNumber: '1234123412341234', expirationDate: '12/26', cvv: '543',
+      fullName: 'Persona Demo', amount: 100, payerId: 'demo-user', payerEmail: 'demo@example.test',
+    })).rejects.toMatchObject({ kind });
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
 test('aborts at 2000ms, distinguishes timeout from cancellation and leaves storage unchanged', async () => {
   localStorage.clear();
   await authService.register(registration);

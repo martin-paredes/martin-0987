@@ -44,8 +44,11 @@ export async function processPayment(input: PaymentRequest, signal?: AbortSignal
     let body: unknown;
     try {
       body = await response.json();
-    } catch {
-      throw new PaymentError('invalidResponse');
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new PaymentError(response.status >= 500 ? 'system' : 'invalidResponse');
+      }
+      throw error;
     }
     controller.signal.throwIfAborted();
     const result = paymentResponseSchema.safeParse(body);

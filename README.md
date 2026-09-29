@@ -9,10 +9,10 @@ Incluye registro e inicio de sesión locales, un dashboard protegido con saldo y
 - Vite: servidor de desarrollo y build del frontend.
 - Material UI y Emotion: componentes visuales y estilos.
 - React Router: navegación y protección de rutas según la sesión local.
-- React Hook Form, Zod y `@hookform/resolvers`: formularios y validación de registro e inicio de sesión.
+- React Hook Form, Zod y `@hookform/resolvers`: formularios de registro, inicio de sesión y recarga.
 - Recharts: donut de apuestas y barras de victorias de caracoles.
 - Node.js, Express y cors: API HTTP y comunicación entre orígenes en desarrollo.
-- Zod: validación del puerto del backend.
+- Zod: validación del puerto, solicitudes de pago, respuestas del mock y datos locales.
 - tsx: ejecución de TypeScript con recarga durante el desarrollo.
 - Vitest, React Testing Library, jest-dom, jsdom y Supertest: pruebas de interfaz y API.
 - ESLint y typescript-eslint: revisión estática del código.
@@ -69,7 +69,14 @@ La versión mínima contempla los [requisitos de Vite](https://vite.dev/guide/) 
 
 ## Installation
 
-Desde la raíz:
+Clonar el repositorio con su URL y entrar en la carpeta:
+
+```sh
+git clone <URL_DEL_REPOSITORIO> martin-0987
+cd martin-0987
+```
+
+Instalar desde la raíz:
 
 ```sh
 npm install
@@ -107,7 +114,7 @@ Los scripts usan herramientas multiplataforma y no requieren sintaxis exclusiva 
 npm test
 ```
 
-Ejecuta las suites una vez. El frontend comprueba registro, validaciones, hash SHA-256, login, restauración de sesión, logout, rutas y fallos de almacenamiento. También comprueba el dashboard y la recarga: importe aprobado, suma de saldos, doble envío, persistencia, rechazo, error de sistema, red, respuestas inválidas y timeout con fake timers. El backend comprueba `/api/health` y los cinco escenarios del mock de pagos. Supertest recibe directamente `app`, sin ejecutar `server.ts` ni requerir un servidor iniciado por separado. La prueba de latencia usa el servicio con fake timers; el retraso HTTP real se verifica funcionalmente.
+Ejecuta las suites una vez. El frontend comprueba registro, validaciones, hash SHA-256, login, restauración de sesión, logout, rutas y fallos de almacenamiento. También comprueba el dashboard y la recarga: importe aprobado, suma de saldos, doble envío, persistencia, HTTP 400, rechazo, error de sistema, red, respuestas inválidas y timeout. El servicio prueba el temporizador con fake timers; el diálogo comprueba además el timeout completo, el saldo intacto y el reintento. Se cubren la cancelación por logout en otra pestaña y los fallos al guardar usuario o última operación. El backend comprueba `/api/health`, CORS y los cinco escenarios del mock de pagos. Supertest recibe directamente `app`, sin ejecutar `server.ts` ni requerir un servidor iniciado por separado. La prueba de latencia usa el servicio con fake timers; el retraso HTTP real se verifica funcionalmente.
 
 jsdom no proporciona `SubtleCrypto`: las pruebas usan la implementación real de Web Crypto de Node. La restauración en React se comprueba desmontando y montando la aplicación con el mismo almacenamiento; la recarga real se verifica en navegador.
 
@@ -161,10 +168,11 @@ Para personalizarlos, copiar manualmente cada `.env.example` a `.env` dentro del
 | --- | --- | --- | --- |
 | `VITE_API_URL` | `frontend/.env` | `http://localhost:3000/api` | Base del API, incluido `/api`. El servicio añade `/payments` al enviar la recarga. |
 | `PORT` | `backend/.env` | `3000` | Puerto entero entre 1 y 65535. Un valor inválido impide iniciar el servidor. |
+| `CORS_ORIGIN` | `backend/.env` | Vacío: permite cualquier origen | Origen exacto del frontend autorizado por CORS, por ejemplo `http://localhost:5173`. Sin ruta ni barra final. |
 
 Vite carga las variables del frontend; los scripts de Node/tsx cargan el `.env` opcional del backend. Reiniciar el proceso tras cambiar variables. Las variables `VITE_*` son públicas y se incorporan al build: no deben contener secretos.
 
-El CORS del backend permite cualquier origen para esta base de desarrollo. Los archivos `.env` reales, dependencias, builds y cobertura están excluidos de Git; los `.env.example` sí se versionan.
+Sin `CORS_ORIGIN`, el backend permite cualquier origen para facilitar las pruebas locales, incluido `preview` en otro puerto. Al configurarla, publica ese origen en la cabecera CORS; para un frontend desplegado se usaría su origen HTTPS. No se utilizan cookies ni credenciales HTTP. CORS controla el acceso desde el navegador y no sustituye la autenticación de una API. Los archivos `.env` reales, dependencias, builds y cobertura están excluidos de Git; los `.env.example` sí se versionan.
 
 ## Autenticación local
 
@@ -172,14 +180,15 @@ Esta autenticación es una simulación íntegramente en el navegador. Conserva u
 
 ### Datos persistidos
 
-| Key | Estructura |
-| --- | --- |
-| `fullstack.auth.user` | `{ id, fullName, email, passwordHash, balance }` |
-| `fullstack.auth.session` | `{ userId }` |
+| Key | Contenido | Cuándo se escribe | Cuándo se elimina |
+| --- | --- | --- | --- |
+| `fullstack.auth.user` | `{ id, fullName, email, passwordHash, balance }` | Registro y acreditación de una recarga aprobada. | La aplicación no la elimina; al borrar datos del navegador se pierde la cuenta y el saldo. |
+| `fullstack.auth.session` | `{ userId }` | Login válido. | Logout o borrado de datos del navegador. |
+| `fullstack.payment.lastTransaction` | `{ id, status, statusDetail, transactionAmount, dateCreated, payerId, cardNumber, cvv }` | Respuesta válida del mock para el usuario activo; reemplaza la anterior. | La aplicación no la elimina; permanece tras logout. |
 
 El ID se genera una sola vez con `crypto.randomUUID()`. La sesión se restaura solo si su `userId` coincide con un usuario válido. No expira automáticamente. Logout elimina exclusivamente la key de sesión y conserva el usuario, el ID y el saldo. El contexto React se actualiza después de persistir cada cambio y escucha cambios de almacenamiento desde otras pestañas.
 
-Las operaciones de LocalStorage se concentran en `services/authStorage.ts`. Los datos se validan con Zod al leerlos: JSON corrupto, estructuras inválidas o registros inexistentes se consideran ausentes y nunca habilitan una sesión. Un registro de usuario corrupto puede reemplazarse con un registro nuevo. Si el navegador bloquea el almacenamiento, la aplicación inicia sin sesión y muestra un error al intentar registrar o iniciar sesión; no confirma una operación que no pudo guardar. Si falla eliminar la sesión, logout muestra el error y mantiene el estado actual para permitir reintentar.
+Las operaciones de LocalStorage se concentran en `services/authStorage.ts` y `services/paymentStorage.ts`. Usuario y sesión se validan con Zod al leerlos: JSON corrupto, estructuras inválidas o registros inexistentes se consideran ausentes y nunca habilitan una sesión. Un registro de usuario corrupto puede reemplazarse con un registro nuevo. La última operación no se lee para restaurar ni acreditar saldo: un registro corrupto en esa key no afecta la sesión y se reemplaza con la siguiente respuesta válida. Si el navegador bloquea el almacenamiento, la aplicación inicia sin sesión y muestra un error al intentar registrar o iniciar sesión; no confirma una operación que no pudo guardar. Si falla eliminar la sesión, logout muestra el error y mantiene el estado actual para permitir reintentar.
 
 ### Validaciones y contraseña
 
@@ -334,6 +343,8 @@ El diálogo usa Material UI, React Hook Form y Zod. Pide tarjeta ficticia de 16 
 
 `paymentService.ts` usa `fetch` con la base de `config.ts`, valida la respuesta con Zod y comprueba que el estado HTTP coincida con el resultado del mock y que los datos correspondan al pagador y tarjeta enviados. Los tipos de solicitud y respuesta se importan con `import type` desde los archivos existentes del backend; no se ejecuta código del servidor en el navegador ni se crea otro workspace.
 
+Si la conexión se interrumpe mientras se lee el cuerpo, se muestra el mensaje de red. Un HTTP 5xx con contenido que no es JSON se presenta como error del sistema; una respuesta de éxito con contenido inválido se rechaza sin acreditar saldo. Nunca se muestra el cuerpo técnico recibido.
+
 ### Resultados y cancelación
 
 | Resultado | Comportamiento |
@@ -375,6 +386,17 @@ Si falla guardar la última operación, no se acredita. Si se guarda una aprobac
 6. Con el backend inaccesible, comprobar el mensaje de conexión y la posibilidad de reintentar.
 
 El flujo se verificó con React y Express reales en Edge, con vistas de 1440, 768 y 375 px. Los datos de prueba automatizados se mantienen en `authFixtures.ts`; no crean una cuenta en el navegador del usuario.
+
+### Auditoría técnica de fase 6
+
+- `npm run lint`, `npm test` y `npm run build` finalizaron correctamente. TypeScript estricto pasó en ambos workspaces. La suite tiene 54 pruebas de frontend y 8 de backend, sin pruebas omitidas.
+- La versión compilada se comprobó con Playwright temporal y Edge, usando procesos de prueba separados y un navegador aislado. Se configuraron `VITE_API_URL`, `PORT` y `CORS_ORIGIN` para esos procesos. Las herramientas y capturas quedaron fuera del repositorio.
+- Se ejecutaron registro, login, dashboard, recargas de `100` y `50.50`, refresh y logout/login. Se comprobó saldo intacto ante validación, HTTP 400, rechazo, error del sistema y timeout. Para verificar HTTP 400 desde la interfaz, la automatización cambió el importe de la solicitud antes de enviarla al backend real.
+- Se detuvo el backend de prueba, se comprobó el error de conexión y se volvió a iniciar. El reintento de `25` dejó el saldo en `175.50`, conservado después de otro logout/login.
+- Se revisaron capturas de registro, login, dashboard, diálogo y mensajes a 375, 768 y 1440 px, además del foco con Tab/Shift+Tab, Escape y su devolución al botón de recarga. No se encontró desbordamiento horizontal ni acciones inaccesibles. Fue una verificación automatizada con revisión visual de capturas.
+- No hubo errores React, excepciones sin manejar ni warnings de aplicación. Los fallos HTTP y de conexión registrados correspondieron a los escenarios provocados. El backend solo imprimió sus mensajes de inicio, sin datos de formularios.
+
+El alcance sigue siendo una simulación local: no hay autorización de servidor, almacenamiento financiero seguro, transacciones atómicas entre keys ni coordinación de recargas entre pestañas. El saldo usa números de JavaScript y redondeo a dos decimales; no es un libro contable para importes arbitrarios. El escenario lento continúa en el servidor aunque el navegador aborte la espera. No se ha realizado despliegue ni una certificación de accesibilidad o compatibilidad con todos los navegadores.
 
 ## Compatibility Notes
 
