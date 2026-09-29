@@ -1,4 +1,11 @@
 # Logs
+# Editor and operating system temporary files
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+*~
+
 logs
 *.log
 npm-debug.log*
