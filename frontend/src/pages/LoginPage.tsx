@@ -37,7 +37,7 @@ export default function LoginPage() {
             {...register('email')} error={!!errors.email} helperText={errors.email?.message} />
           <TextField label="Contraseña" type="password" autoComplete="current-password" fullWidth disabled={isSubmitting}
             {...register('password')} error={!!errors.password} helperText={errors.password?.message} />
-          <Button type="submit" variant="contained" size="large" disabled={isSubmitting}>
+          <Button type="submit" variant="contained" size="large" disabled={isSubmitting} loading={isSubmitting} loadingPosition="start">
             {isSubmitting ? 'Ingresando…' : 'Iniciar sesión'}
           </Button>
         </Stack>

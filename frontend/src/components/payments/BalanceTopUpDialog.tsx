@@ -54,21 +54,26 @@ export function BalanceTopUpDialog({ open, onClose, onSuccess }: { open: boolean
   }
 
   return (
-    <Dialog open={open} onClose={close} fullWidth maxWidth="xs" aria-labelledby="top-up-title">
-      <DialogTitle id="top-up-title">Cargar saldo</DialogTitle>
-      <Box component="form" noValidate autoComplete="off" onSubmit={(event) => { void handleSubmit(submit)(event); }} aria-busy={isSubmitting}>
-        <DialogContent sx={{ pt: 1 }}>
+    <Dialog open={open} onClose={close} fullWidth maxWidth="xs" aria-labelledby="top-up-title"
+      slotProps={{ paper: { sx: { m: { xs: 2, sm: 4 }, width: { xs: 'calc(100% - 32px)', sm: 'calc(100% - 64px)' }, maxHeight: { xs: 'calc(100% - 32px)', sm: 'calc(100% - 64px)' } } } }}>
+      <DialogTitle id="top-up-title" sx={{ px: { xs: 2, sm: 3 } }}>Cargar saldo</DialogTitle>
+      <Box component="form" noValidate autoComplete="off" onSubmit={(event) => { void handleSubmit(submit)(event); }} aria-busy={isSubmitting}
+        sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+        {error && <Alert severity="error" sx={{ mx: { xs: 2, sm: 3 }, mb: 2, flexShrink: 0 }}>{error}</Alert>}
+        <DialogContent sx={{ pt: 1, px: { xs: 2, sm: 3 } }}>
           <Stack spacing={2}>
             <Alert severity="info">Utiliza únicamente datos ficticios.</Alert>
-            {error && <Alert severity="error">{error}</Alert>}
             <TextField label="Número de tarjeta" autoFocus fullWidth disabled={isSubmitting}
               slotProps={{ htmlInput: { inputMode: 'numeric' } }}
               {...register('cardNumber')} error={!!errors.cardNumber} helperText={errors.cardNumber?.message} />
-            <TextField label="Fecha de vencimiento" placeholder="MM/YY" fullWidth disabled={isSubmitting}
-              {...register('expirationDate')} error={!!errors.expirationDate} helperText={errors.expirationDate?.message ?? 'Formato MM/YY'} />
-            <TextField label="CVV" type="password" fullWidth disabled={isSubmitting}
-              slotProps={{ htmlInput: { inputMode: 'numeric' } }}
-              {...register('cvv')} error={!!errors.cvv} helperText={errors.cvv?.message} />
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+              <TextField label="Fecha de vencimiento" placeholder="MM/YY" fullWidth disabled={isSubmitting}
+                sx={{ minWidth: 0 }}
+                {...register('expirationDate')} error={!!errors.expirationDate} helperText={errors.expirationDate?.message ?? 'Formato MM/YY'} />
+              <TextField label="CVV" type="password" fullWidth disabled={isSubmitting}
+                sx={{ minWidth: 0 }} slotProps={{ htmlInput: { inputMode: 'numeric' } }}
+                {...register('cvv')} error={!!errors.cvv} helperText={errors.cvv?.message} />
+            </Stack>
             <TextField label="Nombre completo" fullWidth disabled={isSubmitting}
               {...register('fullName')} error={!!errors.fullName} helperText={errors.fullName?.message} />
             <TextField label="Monto de recarga" type="number" fullWidth disabled={isSubmitting}
@@ -76,9 +81,9 @@ export function BalanceTopUpDialog({ open, onClose, onSuccess }: { open: boolean
               {...register('amount', { valueAsNumber: true })} error={!!errors.amount} helperText={errors.amount?.message ?? 'Importe en MXN'} />
           </Stack>
         </DialogContent>
-        <DialogActions sx={{ p: 3, pt: 1 }}>
+        <DialogActions sx={{ p: 2, px: { xs: 2, sm: 3 }, borderTop: 1, borderColor: 'divider', flexShrink: 0 }}>
           <Button onClick={close} disabled={isSubmitting}>Cancelar</Button>
-          <Button type="submit" variant="contained" disabled={isSubmitting}>
+          <Button type="submit" variant="contained" disabled={isSubmitting} loading={isSubmitting} loadingPosition="start">
             {isSubmitting ? 'Procesando…' : 'Realizar recarga'}
           </Button>
         </DialogActions>

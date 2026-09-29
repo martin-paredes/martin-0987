@@ -40,7 +40,7 @@ export default function RegisterPage() {
             {...register('password')} error={!!errors.password} helperText={errors.password?.message ?? 'Al menos 8 caracteres.'} />
           <TextField label="Confirmar contraseña" type="password" autoComplete="new-password" fullWidth disabled={isSubmitting}
             {...register('confirmPassword')} error={!!errors.confirmPassword} helperText={errors.confirmPassword?.message} />
-          <Button type="submit" variant="contained" size="large" disabled={isSubmitting}>
+          <Button type="submit" variant="contained" size="large" disabled={isSubmitting} loading={isSubmitting} loadingPosition="start">
             {isSubmitting ? 'Creando cuenta…' : 'Crear cuenta'}
           </Button>
         </Stack>
