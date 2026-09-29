@@ -1,15 +1,15 @@
 # Full-Stack App
 
 Base de una aplicación Full-Stack con frontend y backend independientes en un monorepo sencillo.
-La versión inicial incluye una pantalla de bienvenida y un endpoint técnico de salud.
+Incluye registro e inicio de sesión locales, un dashboard temporal protegido y un endpoint técnico de salud.
 
 ## Tech Stack
 
 - React y TypeScript: interfaz con tipado estricto.
 - Vite: servidor de desarrollo y build del frontend.
 - Material UI y Emotion: componentes visuales y estilos.
-- React Router: proveedor de navegación configurado en la entrada del frontend.
-- React Hook Form, Zod y `@hookform/resolvers`: dependencias preparadas para formularios y validación.
+- React Router: navegación y protección de rutas según la sesión local.
+- React Hook Form, Zod y `@hookform/resolvers`: formularios y validación de registro e inicio de sesión.
 - Recharts: dependencia preparada para futuras gráficas.
 - Node.js, Express y cors: API HTTP y comunicación entre orígenes en desarrollo.
 - Zod: validación del puerto del backend.
@@ -17,16 +17,19 @@ La versión inicial incluye una pantalla de bienvenida y un endpoint técnico de
 - Vitest, React Testing Library, jest-dom, jsdom y Supertest: pruebas de interfaz y API.
 - ESLint y typescript-eslint: revisión estática del código.
 
-Las dependencias de formularios y gráficas están instaladas para las siguientes fases; aún no hay formularios ni gráficas.
+Recharts permanece instalado para una fase posterior; no hay gráficas ni pagos implementados.
 
 ## Project Structure
 
 ```text
 frontend/
   src/
-    test/setup.ts       # Configuración de Testing Library
-    App.tsx             # Pantalla inicial con Material UI
-    App.test.tsx         # Prueba de renderizado
+    auth/               # Context, proveedor, guards, esquemas y tipos
+    pages/              # Registro, login y dashboard temporal
+    services/           # Autenticación local y acceso centralizado a LocalStorage
+    test/               # Configuración de Testing Library y datos ficticios
+    App.tsx             # Rutas, layout y carga de páginas bajo demanda
+    App.test.tsx         # Pruebas de formularios, sesión y rutas
     config.ts           # URL base centralizada del API
     main.tsx            # Entrada y BrowserRouter
   .env.example
@@ -93,7 +96,9 @@ Los scripts usan herramientas multiplataforma y no requieren sintaxis exclusiva 
 npm test
 ```
 
-Ejecuta ambas suites una vez. La prueba del frontend comprueba la pantalla inicial; la del backend comprueba el estado HTTP y el JSON de `/api/health`. Supertest recibe directamente `app`, sin ejecutar `server.ts` ni requerir un servidor iniciado por separado.
+Ejecuta las suites una vez. El frontend comprueba registro, validaciones, hash SHA-256, login, restauración de sesión, logout, rutas y fallos de almacenamiento. La prueba del backend comprueba el estado HTTP y el JSON de `/api/health`. Supertest recibe directamente `app`, sin ejecutar `server.ts` ni requerir un servidor iniciado por separado.
+
+jsdom no proporciona `SubtleCrypto`: las pruebas usan la implementación real de Web Crypto de Node. La restauración en React se comprueba desmontando y montando la aplicación con el mismo almacenamiento; la recarga real se verifica en navegador.
 
 Para ejecutar una suite:
 
@@ -147,6 +152,54 @@ Para personalizarlos, copiar manualmente cada `.env.example` a `.env` dentro del
 Vite carga las variables del frontend; los scripts de Node/tsx cargan el `.env` opcional del backend. Reiniciar el proceso tras cambiar variables. Las variables `VITE_*` son públicas y se incorporan al build: no deben contener secretos.
 
 El CORS del backend permite cualquier origen para esta base de desarrollo. Los archivos `.env` reales, dependencias, builds y cobertura están excluidos de Git; los `.env.example` sí se versionan.
+
+## Autenticación local
+
+Esta autenticación es una simulación íntegramente en el navegador. Conserva un único usuario y una sesión en LocalStorage, sin backend de autenticación. El registro crea la cuenta con saldo `0` y redirige a login; no inicia sesión automáticamente. Un segundo registro se rechaza sin sobrescribir la cuenta existente.
+
+### Datos persistidos
+
+| Key | Estructura |
+| --- | --- |
+| `fullstack.auth.user` | `{ id, fullName, email, passwordHash, balance }` |
+| `fullstack.auth.session` | `{ userId }` |
+
+El ID se genera una sola vez con `crypto.randomUUID()`. La sesión se restaura solo si su `userId` coincide con un usuario válido. No expira automáticamente. Logout elimina exclusivamente la key de sesión y conserva el usuario, el ID y el saldo. El contexto React se actualiza después de persistir cada cambio y escucha cambios de almacenamiento desde otras pestañas.
+
+Las operaciones de LocalStorage se concentran en `services/authStorage.ts`. Los datos se validan con Zod al leerlos: JSON corrupto, estructuras inválidas o registros inexistentes se consideran ausentes y nunca habilitan una sesión. Un registro de usuario corrupto puede reemplazarse con un registro nuevo. Si el navegador bloquea el almacenamiento, la aplicación inicia sin sesión y muestra un error al intentar registrar o iniciar sesión; no confirma una operación que no pudo guardar. Si falla eliminar la sesión, logout muestra el error y mantiene el estado actual para permitir reintentar.
+
+### Validaciones y contraseña
+
+- Nombre: obligatorio, mínimo 2 caracteres después de eliminar espacios al inicio y al final.
+- Correo: obligatorio, formato válido, sin espacios exteriores y normalizado a minúsculas antes de guardar o comparar.
+- Contraseña de registro: mínimo 8 caracteres, sin reglas adicionales de composición. Se conserva exactamente lo escrito, incluidos espacios.
+- Confirmación: obligatoria e idéntica a la contraseña; nunca se persiste.
+- Login: correo válido y contraseña no vacía. Credenciales incorrectas muestran siempre `Correo o contraseña incorrectos.`
+
+Se utiliza SHA-256 mediante [Web Crypto](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/digest) exclusivamente para esta simulación local. Se persiste el hash hexadecimal, nunca la contraseña en texto plano ni su confirmación; el hash tampoco se copia en la sesión o el usuario expuesto al contexto React. Web Crypto requiere un contexto seguro, como HTTPS o localhost, y un navegador compatible.
+
+**SHA-256 por sí solo no es un mecanismo adecuado de almacenamiento de contraseñas en producción.** En producción la contraseña debe procesarse en backend con un algoritmo apropiado para contraseñas, salt y factor de trabajo, y nunca almacenarse como credencial en LocalStorage. Los datos locales son manipulables: estas rutas protegidas controlan la navegación de la simulación y no proporcionan autorización real ni protegen datos de un servidor. No usar credenciales reales.
+
+### Rutas
+
+| Ruta | Sin sesión | Con sesión válida |
+| --- | --- | --- |
+| `/register` | Formulario de registro | Redirige a `/dashboard` |
+| `/login` | Formulario de login | Redirige a `/dashboard` |
+| `/dashboard` | Redirige a `/login` | Saludo, saldo y logout |
+| `/` o ruta desconocida | Termina en `/login` | Termina en `/dashboard` |
+
+Las redirecciones reemplazan la entrada del historial. Las páginas se cargan bajo demanda con `React.lazy` y muestran un indicador mientras cargan. No se implementan recuperación de contraseña, múltiples usuarios, expiración ni sincronización entre dispositivos. El almacenamiento pertenece al origen y perfil del navegador; borrarlo elimina la cuenta local.
+
+### Verificación del flujo
+
+1. Abrir `/register`, enviar datos inválidos y comprobar los mensajes.
+2. Registrar un nombre y correo ficticios con una contraseña de al menos 8 caracteres y confirmación idéntica.
+3. Iniciar sesión; comprobar nombre y saldo `$0` en `/dashboard`.
+4. Recargar: la sesión debe continuar. Abrir `/login` y `/register`: deben redirigir al dashboard.
+5. Cerrar sesión; comprobar la redirección y el rechazo de una contraseña incorrecta.
+6. Iniciar sesión correctamente otra vez, cerrar sesión y abrir `/dashboard` directamente: debe volver a login.
+7. Inspeccionar LocalStorage: logout conserva el usuario y saldo, elimina solo la sesión y no hay campos `password` ni `confirmPassword`.
 
 ## Compatibility Notes
 
